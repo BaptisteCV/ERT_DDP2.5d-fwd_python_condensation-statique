@@ -37,6 +37,65 @@ Deux points d'entrée C++, dispatchés sur `model_option` :
 Les deux appellent les **mêmes fonctions C++** ; seul un paramètre
 `build_result_map` diffère (voir §5).
 
+### 1.1 Depuis `main.py` (choisir l'option à exécuter)
+
+Le nom du dossier de scénario (`<SimuType>`, ci-dessus) n'est pas passé en
+argument direct au C++ : il transite par un fichier intermédiaire écrit par
+Python à chaque forward.
+
+- `main.py:32-33` définit deux noms de dossier, un pour le forward EPM et un
+  pour le forward DFN/DDP :
+  ```python
+  expt_name_epm = 'testEPM_CS'   # tabVar[0]
+  expt_name_dfn = 'testDFN'      # tabVar[1]
+  ```
+- `fwdFunctions.fwdEPM()` / `fwdFunctions.fwdDFN()` (`fwdFunctions.py:32-33`
+  et `:51-52`) écrivent respectivement `tabVar[0]` / `tabVar[1]` dans
+  `src/input/SimuType.txt` juste avant d'appeler le C++ (`perform()` en mode
+  librairie, ou l'exécutable). C'est ce fichier que le C++ lit pour savoir
+  dans quel sous-dossier de `src/input/` aller chercher `Simu.txt`,
+  `DomainProperties.txt`, `DFN.txt`, etc.
+- Le `model_option` effectif est donc **entièrement déterminé par le nom de
+  dossier choisi**, puisque chaque dossier existant a un `Simu.txt` déjà figé
+  sur une option (ligne 2, cf. §1) et son propre jeu complet de fichiers
+  d'entrée (`BoundaryConditions.txt`, `DFN.txt`, `DomainProperties.txt`,
+  `ElectrodesPositions.txt`, `FileNames.txt`, `WavesValues.txt`) :
+
+  | Dossier (`src/input/...`) | `model_option` (`Simu.txt` ligne 2) |
+  |---|---|
+  | `testEPM` | `EPM` (classique, ublas/UMFPACK) |
+  | `testEPM_CS` | `EPM_CS` |
+  | `testDFN` | `DDP` (classique, ublas/UMFPACK) |
+  | `testDFN_CS` | `DDP_CS` |
+  | `testDFN_EIGEN` | `DDP_EIGEN` |
+
+**Pour changer d'option, il suffit de changer la valeur de
+`expt_name_epm`/`expt_name_dfn` dans `main.py`** pour qu'elle pointe vers le
+dossier correspondant — aucune autre modification n'est nécessaire côté
+Python (pas besoin de toucher `Simu.txt` ni `fwdFunctions.py`). Par exemple,
+pour passer le forward DFN de `DDP` à `DDP_CS` :
+```python
+expt_name_dfn = 'testDFN_CS'   # au lieu de 'testDFN'
+```
+ou à `DDP_EIGEN` :
+```python
+expt_name_dfn = 'testDFN_EIGEN'
+```
+`expt_name_epm` est déjà réglé sur `'testEPM_CS'` dans le fichier actuel ; il
+n'existe pas de dossier `testEPM_EIGEN` (l'option `EIGEN` sans condensation
+statique n'est proposée que pour DDP, cf. §4).
+
+⚠️ **Piège dans le mode debug.** En cas d'erreur du C++, `main.py` réactive
+le mode debug du binaire (dernière ligne de `Simu.txt` mise à `1`) — mais en
+rouvrant **en dur** `input/testEPM/Simu.txt` (ligne 55) et
+`input/testDFN/Simu.txt` (ligne 82), et non
+`input/<expt_name_epm>/Simu.txt` / `input/<expt_name_dfn>/Simu.txt`. Si
+`expt_name_epm`/`expt_name_dfn` a été changé vers `testEPM_CS`, `testDFN_CS`
+ou `testDFN_EIGEN`, le mode debug est activé sur le mauvais dossier et celui
+réellement utilisé n'est jamais basculé en debug après une erreur. À corriger
+si ce cas se présente, en remplaçant le nom en dur par `tabVar[0]` /
+`tabVar[1]`.
+
 ---
 
 ## 2. `EPM_CS`
@@ -155,29 +214,6 @@ Python — c'est une conversion **une fois, à la fin**.
 
 ---
 
-## 6. Solveurs internes
-
-| Option | Solveur | Fichier |
-|---|---|---|
-| `DDP`/`EPM` classiques | **UMFPACK** (LU direct, SuiteSparse) | `Utilitaries/Math/LinearSystem.cpp:13` (macro `USE_UMFPACK`) |
-| `DDP_EIGEN` | `Eigen::SimplicialLLT` (défaut) ou `Eigen::UmfPackLU` | `DDPModel/SystLinearFunctionsEigen.h:18/21` |
-| `DDP_CS`/`EPM_CS` | Factorisation LLT du bloc intérieur (Schur), résolution dense pour le système condensé | `DDPModelCS.cpp` / `EPMDefinitionCSEigen.cpp` |
-
-`LinearSystemSolving` (`DDP`/`EPM` classiques) construit le système en
-`ublas`, puis extrait un format CSC générique pour appeler UMFPACK
-directement — aucune conversion Eigen n'intervient dans la résolution
-elle-même (le solveur Eigen (`USE_EIGEN`) reste disponible en alternative
-dans ce fichier, mais désactivé par défaut).
-
----
-
-## 7. Dépendances communes
-
-Types centralisés dans `Utilitaries/Storage/EigenCSStructures.h`
-(`eigen_cs::SparseMatrix`, `DenseMatrix`, `Vector`). Parallélisation OpenMP
-sur la boucle électrodes. `PERFORM.so` (mode librairie) via pybind11
-(`pybind11/eigen.h`) — nécessite un interpréteur Python de la même version
-ABI que celle utilisée à la compilation.
 
 Compilation : `make exec` (exécutable) ou `make lib` (librairie) depuis
 `src/electrical_resistivity/Release`. Aucune cible dédiée par option — tous
