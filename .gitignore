@@ -1,0 +1,46 @@
+# C++
+*.o
+*.d
+src/electrical_resistivity/Release/ElectricalResistivity
+src/electrical_resistivity/Release/PERFORM.so
+src/electrical_resistivity/Release/build_output.log
+src/electrical_resistivity/Release/bench_logs/
+
+# Python
+.venv/
+.venv37/
+__pycache__/
+*.pyc
+
+# Résultats de simulation générés (regénérables via main.py)
+src/output/*/*.txt
+src/results/*.txt
+
+
+# eclipse specific git ignore
+*.pydevproject
+.project
+.metadata
+bin/**
+tmp/**
+tmp/**/*
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.classpath
+.settings/
+.loadpath
+
+# External tool builders
+.externalToolBuilders/
+
+# Locally stored "Eclipse launch configurations"
+*.launch
+
+# MacOS
+*.DS_Store
+
+# IDE (JetBrains)
+.idea/

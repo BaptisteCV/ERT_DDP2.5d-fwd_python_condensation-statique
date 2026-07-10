@@ -1,0 +1,7 @@
+Simu.txt
+DomainProperties.txt
+DFN.txt
+BoundaryConditions.txt
+BoundaryConditionsSing.txt
+WavesValues.txt
+ElectrodesPositions.txt

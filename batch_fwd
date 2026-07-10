@@ -1,0 +1,19 @@
+#!/bin/sh
+#SBATCH -J fwdSyn
+#SBATCH --mail-type=END
+#SBATCH --mail-user=lea.lelimouzin@umontpellier.fr
+#SBATCH --partition=cpu-dedicated
+#SBATCH --account=dedicated-cpu@gm_hydro
+#SBATCH --nodes=1 # number of nodes
+#SBATCH --ntasks=28 #number of core used -> 28
+#SBATCH --ntasks-per-node=28 #number of core par nodes 28
+#SBATCH -o info_fwd.out # STDOUT
+#SBATCH -e error_fwd.err # STDERR
+
+echo "Running on $SLURM_NODELIST" 
+
+cd /home/lelimouzinl/scratch_lelimouzinl/ert_ddp_2_5d_sept25_mapEigen/src/electrical_resistivity/Release/
+make clean
+make exec -j 24
+cd ../../../
+python3 -u main.py
