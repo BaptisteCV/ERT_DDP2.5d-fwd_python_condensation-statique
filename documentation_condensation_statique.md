@@ -81,21 +81,7 @@ ou à `DDP_EIGEN` :
 ```python
 expt_name_dfn = 'testDFN_EIGEN'
 ```
-`expt_name_epm` est déjà réglé sur `'testEPM_CS'` dans le fichier actuel ; il
-n'existe pas de dossier `testEPM_EIGEN` (l'option `EIGEN` sans condensation
-statique n'est proposée que pour DDP, cf. §4).
-
-⚠️ **Piège dans le mode debug.** En cas d'erreur du C++, `main.py` réactive
-le mode debug du binaire (dernière ligne de `Simu.txt` mise à `1`) — mais en
-rouvrant **en dur** `input/testEPM/Simu.txt` (ligne 55) et
-`input/testDFN/Simu.txt` (ligne 82), et non
-`input/<expt_name_epm>/Simu.txt` / `input/<expt_name_dfn>/Simu.txt`. Si
-`expt_name_epm`/`expt_name_dfn` a été changé vers `testEPM_CS`, `testDFN_CS`
-ou `testDFN_EIGEN`, le mode debug est activé sur le mauvais dossier et celui
-réellement utilisé n'est jamais basculé en debug après une erreur. À corriger
-si ce cas se présente, en remplaçant le nom en dur par `tabVar[0]` /
-`tabVar[1]`.
-
+`expt_name_epm` est déjà réglé sur `'testEPM_CS'` dans le fichier actuel 
 ---
 
 ## 2. `EPM_CS`
