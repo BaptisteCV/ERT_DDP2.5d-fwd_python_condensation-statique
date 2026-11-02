@@ -54,6 +54,9 @@ public:
     std::map<int, int> global_to_border;
     int Ni;
     int Nb;
+    // true : les cellules du bord haut (j == Ny-1, hors coins) sont condensées avec l'intérieur.
+    // Valable uniquement si la condition du bord haut est NEUMANN de valeur nulle.
+    bool condense_top_border;
 
 public:
     EPMSystemCSEigen();
@@ -62,6 +65,7 @@ public:
     EPMSystemCSEigen& operator=(const EPMSystemCSEigen& other);
 
     void SetConductivity(const DenseMatrix& conductivity);
+    void SetTopBorderCondensation(const BoundaryConditionsDef& bc_map);
     void InitializeSCIndexing();
     void DetermineBasicLinearSystemCS();
     void UpdateSCBlocksFourier();

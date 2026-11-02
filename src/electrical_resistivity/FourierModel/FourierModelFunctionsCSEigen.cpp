@@ -161,6 +161,7 @@ std::map<int, SparseMatrix> FourierPotentialEPMSourceTermCSEigen(
             << (double)(clock() - t_step_start) / CLOCKS_PER_SEC << " sec" << std::endl;
 
         t_step_start = clock();
+    epd_model_base.SetTopBorderCondensation(bc_map);
     epd_model_base.InitializeSCIndexing();
         std::cout << "[PROFILE][EigenCS] InitializeSCIndexing: "
             << (double)(clock() - t_step_start) / CLOCKS_PER_SEC << " sec" << std::endl;

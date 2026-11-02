@@ -23,12 +23,12 @@ inline void AddBlockCoefficient(std::vector<Triplet>& triplets, int row, int col
 }  // namespace
 
 EPMSystemCSEigen::EPMSystemCSEigen()
-        : Nx(0), Ny(0), delta_x(0.0), delta_y(0.0), w(0.0), factor_Aii_ready(false), factor_Aii_llt_ready(false), Ni(0), Nb(0) {
+        : Nx(0), Ny(0), delta_x(0.0), delta_y(0.0), w(0.0), factor_Aii_ready(false), factor_Aii_llt_ready(false), Ni(0), Nb(0), condense_top_border(false) {
 }
 
 EPMSystemCSEigen::EPMSystemCSEigen(int Nx_, int Ny_, double Lx, double Ly, const DenseMatrix& conductivity)
     : Nx(Nx_), Ny(Ny_), delta_x(Lx / Nx_), delta_y(Ly / Ny_), w(0.0),
-            porous_cond(conductivity), factor_Aii_ready(false), factor_Aii_llt_ready(false), Ni(0), Nb(0) {
+            porous_cond(conductivity), factor_Aii_ready(false), factor_Aii_llt_ready(false), Ni(0), Nb(0), condense_top_border(false) {
     potential = DenseMatrix::Zero(Nx, Ny);
 }
 
@@ -43,7 +43,7 @@ EPMSystemCSEigen::EPMSystemCSEigen(const EPMSystemCSEigen& other)
         vector_bb(other.vector_bb), factor_Aii_ready(false), factor_Aii_llt_ready(false),
       interior_global_indices(other.interior_global_indices), border_global_indices(other.border_global_indices),
       global_to_interior(other.global_to_interior), global_to_border(other.global_to_border),
-      Ni(other.Ni), Nb(other.Nb) {
+      Ni(other.Ni), Nb(other.Nb), condense_top_border(other.condense_top_border) {
 }
 
 EPMSystemCSEigen& EPMSystemCSEigen::operator=(const EPMSystemCSEigen& other) {
@@ -77,6 +77,7 @@ EPMSystemCSEigen& EPMSystemCSEigen::operator=(const EPMSystemCSEigen& other) {
         global_to_border = other.global_to_border;
         Ni = other.Ni;
         Nb = other.Nb;
+        condense_top_border = other.condense_top_border;
         factor_Aii_ready = false;
         factor_Aii_llt_ready = false;
     }
@@ -85,6 +86,15 @@ EPMSystemCSEigen& EPMSystemCSEigen::operator=(const EPMSystemCSEigen& other) {
 
 void EPMSystemCSEigen::SetConductivity(const DenseMatrix& conductivity) {
     porous_cond = conductivity;
+}
+
+void EPMSystemCSEigen::SetTopBorderCondensation(const BoundaryConditionsDef& bc_map) {
+    // Une condition NEUMANN nulle n'apporte ni terme diagonal ni second membre :
+    // les cellules du bord haut peuvent alors être éliminées comme des cellules intérieures.
+    BoundaryConditionsDef::const_iterator it = bc_map.find(TOP_BORDER);
+    condense_top_border = (it != bc_map.end() &&
+                           it->second.bc_type == NEUMANN &&
+                           it->second.bc_value == 0.0);
 }
 
 void EPMSystemCSEigen::InitializeSCIndexing() {
@@ -98,7 +108,8 @@ void EPMSystemCSEigen::InitializeSCIndexing() {
     for (int i = 0; i < Nx; ++i) {
         for (int j = 0; j < Ny; ++j) {
             int global_idx = return_index(i, j, Ny);
-            bool is_border = (i == 0 || i == Nx - 1 || j == 0 || j == Ny - 1);
+            bool is_border = (i == 0 || i == Nx - 1 || j == 0 ||
+                              (j == Ny - 1 && !condense_top_border));
             if (is_border) {
                 global_to_border[global_idx] = Nb;
                 border_global_indices.push_back(global_idx);

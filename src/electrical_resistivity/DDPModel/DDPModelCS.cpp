@@ -58,6 +58,7 @@ DDPModelCS::DDPModelCS(const Parameters& param,
     //double t_ctor = omp_get_wtime();
     domain_stored = domain;
     bc_map_classic = param.simu_param.bc_map;
+    SetTopBorderCondensation(bc_map_classic);
     global_border_map = net_mesh.border_map;
     global_nodes_map = net_mesh.nodes_map;
     //std::cout << "[PROFILE][DDPModelCS ctor] copies domain/bc/maps: "
