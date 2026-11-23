@@ -98,28 +98,37 @@ lib_test_big_matrix:
 	$(MAKE) BUILD_CXXFLAGS="-DLIB_TEST_BIG_MATRIX -g -Wall -fPIC -fopenmp" BUILD_LDFLAGS="-O3 -Wall -fopenmp" Perform
 
 CXX := g++
-PAGURE_ROOT := /home/bcellier/Documents/Stage/new_install/pagure
-PAGURE_METIS := $(PAGURE_ROOT)/metis/gcc133/5.1.0
-PAGURE_SUITESPARSE := $(PAGURE_ROOT)/suitesparse/gcc133/5.10.1
-PAGURE_CGAL := $(PAGURE_ROOT)/cgal/gcc133/5.5.2
-PAGURE_BOOST := $(PAGURE_ROOT)/boost/py37/gcc133/1.84.0
-PAGURE_PYMOD := $(PAGURE_ROOT)/python-modules/gcc133
-PAGURE_PY37 := $(PAGURE_ROOT)/python/gcc133/3.7
+
+# Chemins des dependances. Les valeurs par defaut sont celles de la machine locale ; sur une autre machine
+# (cluster), les redefinir dans ../makefile.init (fichier propre a la machine, inclus en tete de ce makefile)
+# ou sur la ligne de commande : make exec SUITESPARSE_ROOT=...
+PAGURE_ROOT ?= /home/bcellier/Documents/Stage/new_install/pagure
+SUITESPARSE_ROOT ?= $(PAGURE_ROOT)/suitesparse/gcc133/5.10.1
+METIS_ROOT ?= $(PAGURE_ROOT)/metis/gcc133/5.1.0
+CGAL_ROOT ?= $(PAGURE_ROOT)/cgal/gcc133/5.5.2
+BOOST_ROOT ?= $(PAGURE_ROOT)/boost/py37/gcc133/1.84.0
+EIGEN_INCLUDE ?= /home/bcellier/pagure/boost_eigen
+EXTRA_INCLUDE_FLAGS ?= -I $(PAGURE_ROOT)/include
+# Utilises seulement par la bibliotheque Python (make lib, PERFORM.so)
+PYMOD_INCLUDE ?= $(PAGURE_ROOT)/python-modules/gcc133/include/python3.7
+PYTHON_INCLUDE ?= $(PAGURE_ROOT)/python/gcc133/3.7/include/python3.7m
+# Options de compilation propres a une machine (vide en local)
+EXTRA_CXXFLAGS ?=
 
 PAGURE_INCLUDE_FLAGS := \
 	-I$(PAGURE_ROOT)/include \
-	-I/home/bcellier/pagure/boost_eigen \
+	-I$(EIGEN_INCLUDE) \
 	-I/usr/include/eigen3 \
-	-I$(PAGURE_METIS)/include \
-	-I$(PAGURE_SUITESPARSE)/include \
-	-I$(PAGURE_CGAL)/include \
-	-I$(PAGURE_BOOST)/include \
-	-I$(PAGURE_PYMOD)/include/python3.7 \
-	-I$(PAGURE_PY37)/include/python3.7m
+	-I$(METIS_ROOT)/include \
+	-I$(SUITESPARSE_ROOT)/include \
+	-I$(CGAL_ROOT)/include \
+	-I$(BOOST_ROOT)/include \
+	-I$(PYMOD_INCLUDE) \
+	-I$(PYTHON_INCLUDE)
 
-PAGURE_RPATH := $(PAGURE_METIS)/lib:$(PAGURE_SUITESPARSE)/lib:$(PAGURE_CGAL)/lib:$(PAGURE_BOOST)/lib
+PAGURE_RPATH := $(METIS_ROOT)/lib:$(SUITESPARSE_ROOT)/lib:$(CGAL_ROOT)/lib:$(BOOST_ROOT)/lib
 
-CXXFLAGS := $(BUILD_CXXFLAGS) $(PAGURE_INCLUDE_FLAGS)
+CXXFLAGS := $(BUILD_CXXFLAGS) $(PAGURE_INCLUDE_FLAGS) $(EXTRA_CXXFLAGS)
 LDFLAGS := $(BUILD_LDFLAGS) -Wl,--no-as-needed -Wl,--copy-dt-needed-entries -Wl,--disable-new-dtags -Wl,-rpath,$(PAGURE_RPATH)
 
 # Tool invocations

@@ -93,6 +93,7 @@ void add_neigh_nodes(std::set<int>&,NodeFracturesMap,int);
 typedef std::map<int,NetworkMeshes> SubNetworkMap;
 NodeFracturesMap ReturnNodeFracturesMap(SubNetworkMap);
 int ReturnNbNodes(SubNetworkMap);
+std::vector<double> ReturnNodeMassCoeffs(const SubNetworkMap&,int);
 int ReturnBlockIndex(SubNetworkMap,int);
 
 #endif /* NETWORKMESHES_H_ */

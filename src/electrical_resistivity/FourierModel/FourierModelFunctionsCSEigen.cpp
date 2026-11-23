@@ -14,6 +14,7 @@
 #include <fstream>
 #include <filesystem>
 #include <omp.h>
+#include <cstdlib>
 
 // using namespace std; removed — use std:: qualifiers
 
@@ -338,7 +339,8 @@ std::map<int, SparseMatrix> FourierPotentialEPMSourceTermCSEigen(
 // La boucle colonnes de matrix_Y est aussi parallélisée dans PrecomputeDDPSCForCurrentFrequency.
 //   → Commenter la ligne suivante pour revenir en mode séquentiel.
 #define DDP_CS_PARALLEL_SOURCES
-static const int DDP_CS_NB_THREADS = 14;
+// Nombre de threads : omp_get_max_threads(), soit OMP_NUM_THREADS (SLURM : --cpus-per-task), sinon le nombre de
+// coeurs de la machine (14 sur la machine locale). Le meme nombre que DDP_EIGEN, pour une comparaison equitable.
 // ─────────────────────────────────────────────────────────────────────────────
 std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
     Parameters param,
@@ -373,20 +375,27 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
             for (int j = 0; j < Ny; ++j)
                 conductivity(i, j) = param.domain_param.mat_cond_dist(i, j);
     }
+    const double t_prof_cond = omp_get_wtime() - t0;
     // std::cout << "[PROFILE][DDPCS] Build conductivity: "
     //           << omp_get_wtime() - t0 << " sec" << std::endl;
 
     // 2. Generate fracture network
     t0 = omp_get_wtime();
     NetworkMeshes net_mesh(domain, param, param.simu_param.simu_option);
+    const double t_prof_net = omp_get_wtime() - t0;
     // std::cout << "[PROFILE][DDPCS] Generate fracture network: "
     //           << omp_get_wtime() - t0 << " sec" << std::endl;
 
     // 3. Construct base DDP model and initialise indexing + basic blocks
     t0 = omp_get_wtime();
     DDPModelCS ddp_base(param, domain, net_mesh, fourier, singularity);
+    const double t_prof_ctor = omp_get_wtime() - t0;
+    t0 = omp_get_wtime();
     ddp_base.InitializeDFNSCIndexing();
+    const double t_prof_index = omp_get_wtime() - t0;
+    t0 = omp_get_wtime();
     ddp_base.DetermineBasicLinearSystemDDPCS();
+    const double t_prof_basic = omp_get_wtime() - t0;
     // std::cout << "[PROFILE][DDPCS] Construct base DDPModelCS + indexing + basic system: "
     //           << omp_get_wtime() - t0 << " sec" << std::endl;
 
@@ -404,7 +413,7 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
     const int nb_elec_total = (int)elec_vec.size();
 
 #ifdef DDP_CS_PARALLEL_SOURCES
-    const int nb_threads_max = DDP_CS_NB_THREADS;
+    const int nb_threads_max = omp_get_max_threads();
 #else
     const int nb_threads_max = 1;
 #endif
@@ -419,6 +428,10 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
     double t_acc_ddp_recon      = 0.0;
     double t_acc_ddp_build      = 0.0;
     int    nb_solves_ddp = 0;
+    double t_acc_pre_blocks = 0.0, t_acc_pre_fact = 0.0, t_acc_pre_Y = 0.0,
+           t_acc_pre_S = 0.0, t_acc_pre_rhs = 0.0;
+    double t_acc_thread_copy = 0.0, t_acc_elec_wall = 0.0;
+    long   prof_nnz_Aii = 0;
 
     double t_wall_loops = omp_get_wtime();
 
@@ -445,13 +458,21 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
         t0 = omp_get_wtime();
         ddp_w.PrecomputeDDPSCForCurrentFrequency();
         t_acc_ddp_precompute += omp_get_wtime() - t0;
+        t_acc_pre_blocks += ddp_w.t_prof_blocks;
+        t_acc_pre_fact   += ddp_w.t_prof_factorize;
+        t_acc_pre_Y      += ddp_w.t_prof_Y;
+        t_acc_pre_S      += ddp_w.t_prof_S;
+        t_acc_pre_rhs    += ddp_w.t_prof_rhs;
+        prof_nnz_Aii      = ddp_w.Aii_g.nonZeros();
 
         // vector_zi_DDP : seul champ cumulatif modifié par électrode → à restaurer.
         // factor_Ai1plusi2 (shared_ptr) : solve() est const → lecture concurrente sûre.
         const Vector vector_zi_DDP_base = ddp_w.vector_zi_DDP;
 
         // Un DDPModelCS par thread, initialisé depuis l'état gelé après précomputation.
+        t0 = omp_get_wtime();
         std::vector<DDPModelCS> ddp_per_thread(nb_threads_max, ddp_w);
+        t_acc_thread_copy += omp_get_wtime() - t0;
 
         // Timers par-fréquence (réduits sur les threads via reduction)
         double t_bc_par=0, t_upd_par=0, t_sol_par=0, t_rec_par=0, t_bld_par=0;
@@ -462,7 +483,7 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
         // Pas de race condition : chaque thread écrit dans potential_by_elec[elec_nb]
         // avec un elec_nb distinct (un seul thread par électrode).
 #ifdef DDP_CS_PARALLEL_SOURCES
-#       pragma omp parallel for num_threads(DDP_CS_NB_THREADS) \
+#       pragma omp parallel for num_threads(nb_threads_max) \
             reduction(+:t_bc_par) reduction(+:t_upd_par) reduction(+:t_sol_par) \
             reduction(+:t_rec_par) reduction(+:t_bld_par) reduction(+:nb_sol_par)
 #endif
@@ -509,6 +530,7 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
         }
 
         double t_wall_elec_elapsed = omp_get_wtime() - t_wall_elec;
+        t_acc_elec_wall += t_wall_elec_elapsed;
         double t_sum_elec = t_bc_par + t_upd_par + t_sol_par + t_rec_par + t_bld_par;
 
         t_acc_ddp_bc_CS  += t_bc_par;
@@ -529,10 +551,11 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
     // en mode librairie (PERFORM.cpp, build_result_map==true), le potentiel
     // est transmis à Python via res_matrices, l'écriture serait un coût pur.
     t0 = omp_get_wtime();
-    if (!build_result_map) {
+    // Variable d'environnement ERT_NO_OUTPUT définie : pas d'écriture (mesure du temps de calcul seul).
+    if (!build_result_map && std::getenv("ERT_NO_OUTPUT") == NULL) {
     std::filesystem::create_directories(param.files_param.output_path);
 #ifdef DDP_CS_PARALLEL_SOURCES
-#   pragma omp parallel for num_threads(DDP_CS_NB_THREADS)
+#   pragma omp parallel for num_threads(nb_threads_max)
 #endif
     for (int ei = 0; ei < nb_elec_total; ++ei) {
         const int elec_nb = elec_vec[ei].first;
@@ -566,7 +589,7 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
     // (PERFORM.cpp / pybind) : MAIN.cpp n'en a pas besoin (résultats déjà écrits sur disque).
     if (build_result_map) {
 #ifdef DDP_CS_PARALLEL_SOURCES
-#       pragma omp parallel for num_threads(DDP_CS_NB_THREADS)
+#       pragma omp parallel for num_threads(nb_threads_max)
 #endif
         for (int ei = 0; ei < nb_elec_total; ++ei) {
             const int elec_nb = elec_vec[ei].first;
@@ -637,6 +660,51 @@ std::map<int, SparseMatrix> FourierPotentialDDPSourceTermCSEigen(
 //     std::cout << "[PROFILE] Ecriture resultats                : " << t_ddp_write << " s" << std::endl;
 //     std::cout << "[PROFILE] GRAND TOTAL (mur)                 : " << t_grand_total << " s" << std::endl;
 //     std::cout << "[PROFILE] ======================================================================\n" << std::endl;
+
+    // Décompte détaillé, uniquement si la variable d'environnement ERT_PROFILE est définie.
+    // Boucle fréquences : temps mur (séquentielle, Y parallélisé en interne).
+    // Boucle sources : temps cumulés sur les threads, et ce cumul divisé par le nb de threads.
+    if (std::getenv("ERT_PROFILE") != NULL) {
+        const double nth = nb_threads_max;
+        const double t_init_tot = t_prof_cond + t_prof_net + t_prof_ctor + t_prof_index + t_prof_basic;
+        const double t_pre_other = t_acc_ddp_precompute - t_acc_pre_blocks - t_acc_pre_fact
+                                 - t_acc_pre_Y - t_acc_pre_S - t_acc_pre_rhs;
+        const double t_freq_wall = t_acc_ddp_copy + t_acc_ddp_fourier + t_acc_ddp_precompute
+                                 + t_acc_thread_copy;
+        std::cout << "[DETAIL] method=DDP_CS threads=" << nb_threads_max
+                  << " N_int=" << ddp_base.Nfi + ddp_base.Ni << " N_bor=" << ddp_base.Nfb + ddp_base.Nb
+                  << " nnz_Aii=" << prof_nnz_Aii
+                  << " n_freq=" << n_freq << " n_src=" << nb_elec_total
+                  << " n_solves=" << nb_solves_ddp << std::endl;
+        std::cout << "[DETAIL] init conductivite                 : " << t_prof_cond  << " s" << std::endl;
+        std::cout << "[DETAIL] init NetworkMeshes                : " << t_prof_net   << " s" << std::endl;
+        std::cout << "[DETAIL] init DDPModelCS ctor              : " << t_prof_ctor  << " s" << std::endl;
+        std::cout << "[DETAIL] init InitializeDFNSCIndexing      : " << t_prof_index << " s" << std::endl;
+        std::cout << "[DETAIL] init DetermineBasicLinearSystemCS : " << t_prof_basic << " s" << std::endl;
+        std::cout << "[DETAIL] init total                        : " << t_init_tot   << " s" << std::endl;
+        std::cout << "[DETAIL] freq (temps mur, cumul sur " << n_freq << " freq) :" << std::endl;
+        std::cout << "[DETAIL]   copie ddp_base             : " << t_acc_ddp_copy    << " s" << std::endl;
+        std::cout << "[DETAIL]   UpdateDDPSCBlocksFourier   : " << t_acc_ddp_fourier << " s" << std::endl;
+        std::cout << "[DETAIL]   precompute: blocs globaux  : " << t_acc_pre_blocks  << " s" << std::endl;
+        std::cout << "[DETAIL]   precompute: factorize Aii  : " << t_acc_pre_fact    << " s" << std::endl;
+        std::cout << "[DETAIL]   precompute: Y = Aii^-1 Aib : " << t_acc_pre_Y       << " s" << std::endl;
+        std::cout << "[DETAIL]   precompute: S = Abb - Abi Y: " << t_acc_pre_S       << " s" << std::endl;
+        std::cout << "[DETAIL]   precompute: rhs zi/zb      : " << t_acc_pre_rhs     << " s" << std::endl;
+        std::cout << "[DETAIL]   precompute: reste          : " << t_pre_other       << " s" << std::endl;
+        std::cout << "[DETAIL]   copies ddp_per_thread      : " << t_acc_thread_copy << " s" << std::endl;
+        std::cout << "[DETAIL]   sous-total freq            : " << t_freq_wall       << " s" << std::endl;
+        std::cout << "[DETAIL] sources (somme threads | /nb threads) :" << std::endl;
+        std::cout << "[DETAIL]   BoundaryConditionsDef      : " << t_acc_ddp_bc_CS  << " | " << t_acc_ddp_bc_CS /nth << " s" << std::endl;
+        std::cout << "[DETAIL]   UpdateBC+sources (S copie) : " << t_acc_ddp_update << " | " << t_acc_ddp_update/nth << " s" << std::endl;
+        std::cout << "[DETAIL]   SolveCondensed (LU dense)  : " << t_acc_ddp_solve  << " | " << t_acc_ddp_solve /nth << " s" << std::endl;
+        std::cout << "[DETAIL]   ReconstructInterior        : " << t_acc_ddp_recon  << " | " << t_acc_ddp_recon /nth << " s" << std::endl;
+        std::cout << "[DETAIL]   BuildGlobalSolution        : " << t_acc_ddp_build  << " | " << t_acc_ddp_build /nth << " s" << std::endl;
+        std::cout << "[DETAIL]   somme                      : " << t_boucle_source  << " | " << t_boucle_source /nth << " s" << std::endl;
+        std::cout << "[DETAIL]   temps mur boucles sources  : " << t_acc_elec_wall  << " s" << std::endl;
+        std::cout << "[DETAIL] loops temps mur (freq+sources)  : " << t_wall_loops_elapsed << " s" << std::endl;
+        std::cout << "[DETAIL] ecriture                        : " << t_ddp_write << " s" << std::endl;
+        std::cout << "[DETAIL] total fonction                  : " << t_grand_total << " s" << std::endl;
+    }
 
     return res_matrices;
 }

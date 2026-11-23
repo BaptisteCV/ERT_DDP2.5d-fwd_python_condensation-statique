@@ -32,6 +32,7 @@ public:
     std::vector<int> border_fract_global_indices;
     std::map<int, int> global_to_interior_fract;
     std::map<int, int> global_to_border_fract;
+    std::vector<double> node_mass;  // sigma_moy * e_moy^2 per fracture node (omega^2 term, independent of omega)
 
     
     
@@ -79,6 +80,10 @@ public:
 
     std::shared_ptr<LinearSystemSparseLLTFactorization> factor_Ai1plusi2;
     bool factor_Afi_i2i2_ready;
+
+    // Profiling de PrecomputeDDPSCForCurrentFrequency (temps mur du dernier appel)
+    double t_prof_blocks = 0.0, t_prof_factorize = 0.0, t_prof_Y = 0.0,
+           t_prof_S = 0.0, t_prof_rhs = 0.0;
 
 public:
 

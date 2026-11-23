@@ -475,6 +475,27 @@ int ReturnNbNodes(SubNetworkMap subnetwork_map){
 	return node_index.size();
 }
 
+// return, for each fracture node i, the coefficient of the omega^2 term of the node equation:
+// mean conductivity * (mean aperture)^2, arithmetic means over the segments of all the subnetworks ending at i
+vector<double> ReturnNodeMassCoeffs(const SubNetworkMap& subnetwork_map,int nb_nodes){
+	vector<double> sum_cond(nb_nodes,0.0),sum_aper(nb_nodes,0.0),node_mass(nb_nodes,0.0);
+	vector<int> nb_segments(nb_nodes,0);
+	for (SubNetworkMap::const_iterator it1=subnetwork_map.begin();it1!=subnetwork_map.end();it1++){
+		for (vector<FractureMesh>::const_iterator it2=it1->second.meshes.begin();it2!=it1->second.meshes.end();it2++){
+			for (int node : {it2->p_ori.index,it2->p_tar.index}){
+				sum_cond[node]+=it2->conductivity;sum_aper[node]+=it2->aperture;nb_segments[node]++;
+			}
+		}
+	}
+	for (int i=0;i<nb_nodes;i++){
+		if (nb_segments[i]>0){
+			double mean_aper=sum_aper[i]/nb_segments[i];
+			node_mass[i]=sum_cond[i]/nb_segments[i]*mean_aper*mean_aper;
+		}
+	}
+	return node_mass;
+}
+
 // return the map of node index and a list of their corresponding fractures
 NodeFracturesMap ReturnNodeFracturesMap(SubNetworkMap subnetwork_map){
 	// 0. Variables

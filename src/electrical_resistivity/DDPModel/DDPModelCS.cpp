@@ -72,6 +72,7 @@ DDPModelCS::DDPModelCS(const Parameters& param,
     //double t_ddpnet = omp_get_wtime();
     subnetwork_map = DDPNetworkMeshes(net_mesh_copy, Nx, Ny);
     nb_nodes_fract = ReturnNbNodes(subnetwork_map);
+    node_mass = ReturnNodeMassCoeffs(subnetwork_map, nb_nodes_fract);
     //std::cout << "[PROFILE][DDPModelCS ctor] DDPNetworkMeshes + ReturnNbNodes: "
     //          << omp_get_wtime() - t_ddpnet << " sec" << std::endl;
 }
@@ -90,6 +91,7 @@ DDPModelCS::DDPModelCS(const DDPModelCS& other)
       border_fract_global_indices(other.border_fract_global_indices),
       global_to_interior_fract(other.global_to_interior_fract),
       global_to_border_fract(other.global_to_border_fract),
+      node_mass(other.node_mass),
       block_Afi_i2i2(other.block_Afi_i2i2), block_Afi_b2b2(other.block_Afi_b2b2),
       block_Afi_i2b2(other.block_Afi_i2b2), block_Afi_b2i2(other.block_Afi_b2i2),
       block_Afm_i2i1(other.block_Afm_i2i1), block_Afm_i2b1(other.block_Afm_i2b1),
@@ -126,6 +128,7 @@ DDPModelCS& DDPModelCS::operator=(const DDPModelCS& other) {
         border_fract_global_indices = other.border_fract_global_indices;
         global_to_interior_fract = other.global_to_interior_fract;
         global_to_border_fract = other.global_to_border_fract;
+        node_mass = other.node_mass;
         block_Afi_i2i2 = other.block_Afi_i2i2; block_Afi_b2b2 = other.block_Afi_b2b2;
         block_Afi_i2b2 = other.block_Afi_i2b2; block_Afi_b2i2 = other.block_Afi_b2i2;
         block_Afm_i2i1 = other.block_Afm_i2i1; block_Afm_i2b1 = other.block_Afm_i2b1;
@@ -551,7 +554,7 @@ void DDPModelCS::UpdateDDPSCBlocksFourier() {
             ReturnDerivativeCoeffFullFourier(L, L, k_fract, current_w, a1_L, a2_L, a3_L);
 
             // node1 diagonal: mass-like term minus derivative part
-            double diag1 = coeff * fract.aperture * current_w * current_w - coeff * a1_0;
+            double diag1 = - coeff * a1_0;
             if (n1_in) trips_Afi_i2i2.emplace_back(l1, l1, diag1);
             else trips_Afi_b2b2.emplace_back(l1, l1, diag1);
 
@@ -621,6 +624,14 @@ void DDPModelCS::UpdateDDPSCBlocksFourier() {
                 }
             }
         }
+    }
+
+    // 3bis. omega^2 term of the node equation: once per fracture node
+    for (int node = 0; node < nb_nodes_fract; ++node) {
+        double mass = current_w * current_w * node_mass[node];
+        std::map<int, int>::const_iterator it_in = global_to_interior_fract.find(node);
+        if (it_in != global_to_interior_fract.end()) trips_Afi_i2i2.emplace_back(it_in->second, it_in->second, mass);
+        else trips_Afi_b2b2.emplace_back(global_to_border_fract.at(node), global_to_border_fract.at(node), mass);
     }
 
     // 4. Assign to sparse matrices and compress
@@ -873,6 +884,7 @@ void DDPModelCS::PrecomputeDDPSCForCurrentFrequency() {
     const int N_bor_global = Nfb + Nb;
 
     clock_t t_blocks = clock();
+    double t_w = omp_get_wtime();
 
     std::vector<Triplet> trips_Aii_g;
     std::vector<Triplet> trips_Aib_g;
@@ -938,6 +950,8 @@ void DDPModelCS::PrecomputeDDPSCForCurrentFrequency() {
     Abi_g.makeCompressed();
     Abb_g.makeCompressed();
 
+    t_prof_blocks = omp_get_wtime() - t_w;
+    t_w = omp_get_wtime();
     // std::cout << "[PROFILE][DDPCS]     Step 2 - Build global blocks (Aii_g, Aib_g, Abi_g, Abb_g): "
     //           << (double)(clock() - t_blocks) / CLOCKS_PER_SEC << " sec" << std::endl;
 
@@ -950,6 +964,8 @@ void DDPModelCS::PrecomputeDDPSCForCurrentFrequency() {
         LinearSystemFactorizeLLT(Aii_g, *factor_Ai1plusi2);
         factor_Afi_i2i2_ready = true;
     }
+    t_prof_factorize = omp_get_wtime() - t_w;
+    t_w = omp_get_wtime();
     // std::cout << "[PROFILE][DDPCS]     Step 3 - Factorize Aii_g: "
             //   << (double)(clock() - t_factorize) / CLOCKS_PER_SEC << " sec" << std::endl;
 
@@ -959,7 +975,7 @@ void DDPModelCS::PrecomputeDDPSCForCurrentFrequency() {
         // SimplicialLLT::solve() est const → thread-safe pour des RHS différents.
         // schedule(static) + vecteurs thread-locaux pré-alloués pour éviter la contention malloc.
         // Note : si le facteur LLT est très grand (>L3 cache), réduire nb_threads peut être plus rapide.
-        #pragma omp parallel num_threads(14)
+        #pragma omp parallel   // nombre de threads : omp_get_max_threads() (OMP_NUM_THREADS)
         {
             Vector rhs_col(N_int_global);
             Vector x_col(N_int_global);
@@ -974,6 +990,8 @@ void DDPModelCS::PrecomputeDDPSCForCurrentFrequency() {
             }
         }
     }
+    t_prof_Y = omp_get_wtime() - t_w;
+    t_w = omp_get_wtime();
     // std::cout << "[PROFILE][DDPCS]     Step 4 - Compute matrix_Y_DDP: "
     //           << (double)(clock() - t_matrix_y) / CLOCKS_PER_SEC << " sec" << std::endl;
 
@@ -989,6 +1007,8 @@ void DDPModelCS::PrecomputeDDPSCForCurrentFrequency() {
     }
     matrix_S_DDP_precomputed = matrix_S_DDP;
     matrix_Y_DDP = DenseMatrix();  // ~266 MB freed here — not needed after this point
+    t_prof_S = omp_get_wtime() - t_w;
+    t_w = omp_get_wtime();
     // std::cout << "[PROFILE][DDPCS]     Step 5 - Compute matrix_S_DDP: "
     //           << (double)(clock() - t_matrix_s) / CLOCKS_PER_SEC << " sec" << std::endl;
 
@@ -1017,6 +1037,7 @@ void DDPModelCS::PrecomputeDDPSCForCurrentFrequency() {
         vector_zb_DDP.noalias() -= (Abi_g * vector_zi_DDP);
     }
     vector_rhs_DDP = vector_zb_DDP;
+    t_prof_rhs = omp_get_wtime() - t_w;
     // std::cout << "[PROFILE][DDPCS]     Step 6 - Compute vector_zi_DDP / vector_zb_DDP: "
     //           << (double)(clock() - t_rhs) / CLOCKS_PER_SEC << " sec" << std::endl;
 

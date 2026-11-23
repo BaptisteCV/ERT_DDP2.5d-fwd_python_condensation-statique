@@ -13,6 +13,7 @@
 #include "../DDPModel/SystLinearFunctionsEigen.h"
 #include "../DFNModel/DFNGeneration.h"
 #include <omp.h>
+#include <cstdlib>
 
 using namespace std;
 
@@ -558,19 +559,20 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
 
     // ── 2. Système de base Eigen (stencil poreux + pattern DFN) ────────────
     t0 = omp_get_wtime();
+    double t_init0 = t0;
     DDPModel ddp_model_init(param, domain, net_mesh, fourier, singularity);
-    //double t_ctor = omp_get_wtime() - t0;
+    double t_ctor = omp_get_wtime() - t0;
 
-    //t0 = omp_get_wtime();
+    t0 = omp_get_wtime();
     ddp_model_init.DetermineBasicLinearSystemDDP();
-    //double t_basic_ublas = omp_get_wtime() - t0;
+    double t_basic_ublas = omp_get_wtime() - t0;
 
-    //t0 = omp_get_wtime();
+    t0 = omp_get_wtime();
     DDPEigenBase base = DetermineBasicLinearSystemDDPEigen(ddp_model_init);
-    //double t_basic_eigen = omp_get_wtime() - t0;
+    double t_basic_eigen = omp_get_wtime() - t0;
 
     // ── 3. Matrice complète pour analyzePattern (1ère élec + 1ère fréq) ────
-    //t0 = omp_get_wtime();
+    t0 = omp_get_wtime();
     // analyzePattern sur une matrice avec BCs donne un ordering AMD optimal :
     // les nœuds Dirichlet sont déjà isolés dans le graphe de dépendance.
     eigen_cs::SparseMatrix mat_pattern = base.matrix_base;
@@ -594,6 +596,8 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
         UpdateLinearSystemFourierEigen(base, w_vect.front(), bc0, bcdfn0, src0,
                                        singularity, mat_pattern, vec0);
     }
+    double t_pattern = omp_get_wtime() - t0;
+    t0 = omp_get_wtime();
 
     // ── 4. Un solveur par thread, pattern symbolique pré-calculé ────────────
     // En mode séquentiel : 1 solveur. En mode parallèle : autant que de threads.
@@ -607,8 +611,8 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
         solvers[t] = new DDPEigenSolver();
         solvers[t]->analyzePattern(mat_pattern);
     }
-    //double t_analyze = omp_get_wtime() - t0;
-    double t_init = omp_get_wtime() - t0;
+    double t_analyze = omp_get_wtime() - t0;
+    double t_init = omp_get_wtime() - t_init0;
 
     // ── 5. Conversion map → vecteur pour boucle for indexée (parallel for) ─
     vector<pair<int, pair<double,double>>> elec_vec(
@@ -620,6 +624,8 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
     //    somme = nb_threads × temps_moyen_par_thread ≈ nb_threads × (temps_mur / nb_threads)
     //    → la somme est invariante par rapport au nb de threads (= travail total réalisé).
     double t_copy=0, t_bc=0, t_assem=0, t_solve=0, t_write=0;
+    double t_fact=0, t_subst=0, t_stack=0;
+    double t_as_blocks=0, t_as_bcdfn=0, t_as_bcepm=0;
     int nb_solves = 0;
     double t_wall = omp_get_wtime();   // temps mur de la section parallèle
 
@@ -628,7 +634,9 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
 #ifdef DDP_EIGEN_PARALLEL_SOURCES
 #   pragma omp parallel for\
         reduction(+:t_copy) reduction(+:t_bc) reduction(+:t_assem) \
-        reduction(+:t_solve) reduction(+:t_write) reduction(+:nb_solves)
+        reduction(+:t_solve) reduction(+:t_write) reduction(+:nb_solves) \
+        reduction(+:t_fact) reduction(+:t_subst) reduction(+:t_stack) \
+        reduction(+:t_as_blocks) reduction(+:t_as_bcdfn) reduction(+:t_as_bcepm)
 #endif
     for (int ei = 0; ei < nb_elec_total; ei++) {
 
@@ -675,8 +683,10 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
 
             // c. Assemblage des termes w-dépendants
             t_loc = omp_get_wtime();
+            double t_parts[3] = {0.0, 0.0, 0.0};
             UpdateLinearSystemFourierEigen(base, w, bc_epm, bc_dfn, src,
-                                           singularity, mat, vec);
+                                           singularity, mat, vec, t_parts);
+            t_as_blocks += t_parts[0]; t_as_bcdfn += t_parts[1]; t_as_bcepm += t_parts[2];
             t_assem += omp_get_wtime() - t_loc;
 
             // d. Résolution (factorisation numérique, pattern symbolique réutilisé)
@@ -684,7 +694,8 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
             eigen_cs::Vector      phi_dfn;
             eigen_cs::DenseMatrix phi_mat;
             EvaluatePotentialEigen(base.nb_nodes_fract, base.Nx, base.Ny,
-                                   local_solver, mat, vec, phi_dfn, phi_mat);
+                                   local_solver, mat, vec, phi_dfn, phi_mat,
+                                   &t_fact, &t_subst);
             t_solve += omp_get_wtime() - t_loc;
             ++nb_solves;
 
@@ -696,7 +707,8 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
         // Uniquement en mode exécutable (MAIN.cpp) : en mode librairie
         // (PERFORM.cpp, build_result_map==true), le potentiel est transmis
         // à Python via res_matrices, l'écriture serait un coût pur.
-        if (!build_result_map) {
+        // Variable d'environnement ERT_NO_OUTPUT définie : pas d'écriture (mesure du temps de calcul seul).
+        if (!build_result_map && std::getenv("ERT_NO_OUTPUT") == NULL) {
             t_loc = omp_get_wtime();
             Results(param.files_param.output_path
                     + "Matrix_Potential" + to_string(nb_elec) + ".txt",
@@ -708,6 +720,7 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
         // par électrode, uniquement nécessaire quand le résultat est renvoyé à l'appelant
         // (PERFORM.cpp / pybind) : MAIN.cpp n'en a pas besoin (résultats écrits sur disque).
         if (build_result_map) {
+            t_loc = omp_get_wtime();
             Eigen::MatrixXd A_dense((int)w_vect.size() * base.Nx, base.Ny);
             A_dense.setZero();
             int cpt_w = 0;
@@ -721,6 +734,7 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
             }
 #pragma omp critical
             { res_matrices[nb_elec] = A_dense.sparseView(); }
+            t_stack += omp_get_wtime() - t_loc;
         }
     }
 
@@ -769,6 +783,40 @@ std::map<int, eigen_cs::SparseMatrix> FourierPotentialDDPSourceTermEigen(
 // #endif
 //     cout << "[PROFILE]   TOTAL (hors-boucles + temps mur)   : " << t_net + t_init + t_wall_elapsed << " sec" << endl;
 //     cout << "[PROFILE] ====================================================================\n" << endl;
+
+    // Décompte détaillé, uniquement si la variable d'environnement ERT_PROFILE est définie.
+    // Boucle : temps cumulés sur les threads, et ce cumul divisé par le nb de threads
+    // (≈ part du temps mur si la charge est équilibrée).
+    if (std::getenv("ERT_PROFILE") != NULL) {
+        const double nth = nb_threads_max;
+        const double t_loop_sum = t_copy + t_bc + t_assem + t_solve + t_write + t_stack;
+        cout << "[DETAIL] method=DDP_EIGEN threads=" << nb_threads_max
+             << " n=" << base.n << " nnz_base=" << base.matrix_base.nonZeros()
+             << " nnz_pattern=" << mat_pattern.nonZeros()
+             << " n_freq=" << w_vect.size() << " n_src=" << nb_elec_total
+             << " n_solves=" << nb_solves << endl;
+        cout << "[DETAIL] init NetworkMeshes                  : " << t_net         << " s" << endl;
+        cout << "[DETAIL] init DDPModel ctor                  : " << t_ctor        << " s" << endl;
+        cout << "[DETAIL] init DetermineBasicLinearSystemDDP  : " << t_basic_ublas << " s  (ublas)" << endl;
+        cout << "[DETAIL] init DetermineBasicLinearSystemEigen: " << t_basic_eigen << " s" << endl;
+        cout << "[DETAIL] init matrice pattern (BC+assemblage): " << t_pattern     << " s" << endl;
+        cout << "[DETAIL] init analyzePattern x" << nb_threads_max << "             : " << t_analyze << " s" << endl;
+        cout << "[DETAIL] init total                          : " << t_net + t_init << " s" << endl;
+        cout << "[DETAIL] loop (somme threads | /nb threads) :" << endl;
+        cout << "[DETAIL]   copie matrix_base     : " << t_copy  << " | " << t_copy /nth << " s" << endl;
+        cout << "[DETAIL]   DDPModelFourierBC     : " << t_bc    << " | " << t_bc   /nth << " s" << endl;
+        cout << "[DETAIL]   assemblage w (Update) : " << t_assem << " | " << t_assem/nth << " s" << endl;
+        cout << "[DETAIL]     dont blocs DFN/poreux (indep. source) : " << t_as_blocks << " | " << t_as_blocks/nth << " s" << endl;
+        cout << "[DETAIL]     dont CL fractures (MIXED_BC)        : " << t_as_bcdfn  << " | " << t_as_bcdfn /nth << " s" << endl;
+        cout << "[DETAIL]     dont CL EPM + terme source          : " << t_as_bcepm  << " | " << t_as_bcepm /nth << " s" << endl;
+        cout << "[DETAIL]   factorize (num.)      : " << t_fact  << " | " << t_fact /nth << " s" << endl;
+        cout << "[DETAIL]   solve (substitutions) : " << t_subst << " | " << t_subst/nth << " s" << endl;
+        cout << "[DETAIL]   solve recopie+reste   : " << t_solve - t_fact - t_subst << " | " << (t_solve - t_fact - t_subst)/nth << " s" << endl;
+        cout << "[DETAIL]   ecriture / empilement : " << t_write + t_stack << " | " << (t_write + t_stack)/nth << " s" << endl;
+        cout << "[DETAIL]   somme                 : " << t_loop_sum << " | " << t_loop_sum/nth << " s" << endl;
+        cout << "[DETAIL] loop temps mur                      : " << t_wall_elapsed << " s" << endl;
+        cout << "[DETAIL] total fonction (init + loop mur)    : " << t_net + t_init + t_wall_elapsed << " s" << endl;
+    }
 
     return res_matrices;
 }

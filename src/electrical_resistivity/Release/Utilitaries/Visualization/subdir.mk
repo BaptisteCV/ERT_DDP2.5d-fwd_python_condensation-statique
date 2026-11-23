@@ -23,7 +23,7 @@ CPP_DEPS += \
 Utilitaries/Visualization/%.o: ../Utilitaries/Visualization/%.cpp
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C++ Compiler'
-	$(CXX) $(CXXFLAGS) -I /usr/include/GL/ -I /home/bcellier/Documents/Stage/new_install/pagure/include -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
+	$(CXX) $(CXXFLAGS) -I /usr/include/GL/ $(EXTRA_INCLUDE_FLAGS) -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '
 

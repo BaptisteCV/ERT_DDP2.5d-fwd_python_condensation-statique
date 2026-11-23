@@ -17,6 +17,6 @@ CPP_DEPS += \
 %.o: ../%.cpp
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C++ Compiler'
-	$(CXX) $(CXXFLAGS) -fPIC -I /home/bcellier/Documents/Stage/new_install/pagure/include -I /home/bcellier/Documents/Stage/new_install/pagure/python-modules/gcc133/include/python3.7 -I /home/bcellier/Documents/Stage/new_install/pagure/python-modules/gcc133/include/python3.7/pybind11 -I /home/bcellier/Documents/Stage/new_install/pagure/python/gcc133/3.7/include/python3.7m -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
+	$(CXX) $(CXXFLAGS) -fPIC $(EXTRA_INCLUDE_FLAGS) -I $(PYMOD_INCLUDE) -I $(PYMOD_INCLUDE)/pybind11 -I $(PYTHON_INCLUDE) -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '

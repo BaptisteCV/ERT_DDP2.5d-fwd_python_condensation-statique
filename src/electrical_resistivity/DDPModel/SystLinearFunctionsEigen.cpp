@@ -32,6 +32,7 @@ DDPEigenBase DetermineBasicLinearSystemDDPEigen(DDPModel& m) {
     base.delta_y            = m.delta_y;
     base.subnetwork_map_ptr = &m.subnetwork_map;   // pointeur — zéro copie
     base.n                  = m.nb_nodes_fract + m.Nx * m.Ny;
+    base.node_mass          = ReturnNodeMassCoeffs(m.subnetwork_map, m.nb_nodes_fract);
 
     // Conversion ublas → Eigen dense pour accès O(1)
     base.porous_cond.resize(m.Nx, m.Ny);
@@ -127,7 +128,7 @@ static void DFNDDPLinearSystemFourierEigen(
         int n1 = frac.p_ori.index, n2 = frac.p_tar.index, nm = nf + block_idx;
 
         ReturnDerivativeCoeffFullFourier(0, L, k_fract, w, a1, a2, a3);
-        mat.coeffRef(n1, n1) += coeff * frac.aperture * w * w - coeff * a1;
+        mat.coeffRef(n1, n1) -= coeff * a1;
         mat.coeffRef(n1, n2) -= coeff * a2;
         mat.coeffRef(n1, nm) -= coeff * a3;
 
@@ -235,8 +236,10 @@ void UpdateLinearSystemFourierEigen(
     const BoundaryConditionsDFN& bc_map,
     const SourceTermsEPM& src,
     bool singularity,
-    EigenSparse& mat, EigenVec& vec)
+    EigenSparse& mat, EigenVec& vec,
+    double* t_parts)
 {
+    double t_loc = omp_get_wtime();
     SubNetworkMap& snmap = *base.subnetwork_map_ptr;
     for (auto it = snmap.begin(); it != snmap.end(); ++it) {
         auto ij    = rij(it->first, base.Ny);
@@ -249,12 +252,18 @@ void UpdateLinearSystemFourierEigen(
                                                 base.Ny, w, base.delta_x, base.delta_y,
                                                 base.porous_cond, mat);
     }
+    // Terme en w^2 de l'équation de noeud : une fois par noeud (avant les CL de Dirichlet)
+    for (int i = 0; i < base.nb_nodes_fract; i++)
+        mat.coeffRef(i, i) += w * w * base.node_mass[i];
+    if (t_parts) { t_parts[0] += omp_get_wtime() - t_loc; t_loc = omp_get_wtime(); }
     BCDDPLinearSystemFourierEigen(base.nb_nodes_fract, w, base.delta_x, base.delta_y,
                                    src, snmap, bc_map, mat, vec);
+    if (t_parts) { t_parts[1] += omp_get_wtime() - t_loc; t_loc = omp_get_wtime(); }
     UpdateLinearSystemBC_EPMEigen(base.nb_nodes_fract, base.Nx, base.Ny,
                                    bc_def_epm, base.porous_cond,
                                    base.delta_x, base.delta_y, mat, vec);
     SourceTermFourierEigen(src, base.nb_nodes_fract, base.Ny, singularity, vec);
+    if (t_parts) { t_parts[2] += omp_get_wtime() - t_loc; }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,9 +276,12 @@ void EvaluatePotentialEigen(
     int nf, int Nx, int Ny,
     DDPEigenSolver& solver,
     EigenSparse& mat, const EigenVec& vec,
-    EigenVec& DFNPotential, Eigen::MatrixXd& PorousPotential)
+    EigenVec& DFNPotential, Eigen::MatrixXd& PorousPotential,
+    double* t_factorize, double* t_solve)
 {
+    double t_loc = omp_get_wtime();
     solver.factorize(mat);
+    if (t_factorize) *t_factorize += omp_get_wtime() - t_loc;
     if (solver.info() != Eigen::Success) {
 #if defined(DDP_EIGEN_SOLVER_LLT)
         cout << "[ERROR][DDP_EIGEN] SimplicialLLT factorization failed (matrice non SPD ?)" << endl;
@@ -278,7 +290,9 @@ void EvaluatePotentialEigen(
 #endif
         return;
     }
+    t_loc = omp_get_wtime();
     EigenVec phi = solver.solve(vec);
+    if (t_solve) *t_solve += omp_get_wtime() - t_loc;
 
     // Recopie sans boucle ublas : affectation directe dans des conteneurs Eigen denses
     DFNPotential = phi.head(nf);

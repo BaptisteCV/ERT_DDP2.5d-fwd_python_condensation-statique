@@ -33,6 +33,7 @@ struct DDPEigenBase {
     double delta_x, delta_y;
     Eigen::MatrixXd porous_cond;           // copie dense (O(1) accès)
     SubNetworkMap* subnetwork_map_ptr;     // pointeur — pas de copie du SubNetworkMap
+    std::vector<double> node_mass;         // sigma_moy * e_moy^2 par noeud (terme en w^2, indépendant de w)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,13 +54,15 @@ void UpdateLinearSystemFourierEigen(
     const SourceTermsEPM& source_terms_epm,
     bool singularity,
     eigen_cs::SparseMatrix& matrix_syst,
-    eigen_cs::Vector& vector_syst);
+    eigen_cs::Vector& vector_syst,
+    double* t_parts = nullptr);   // profiling : [blocs DFN/poreux, CL fractures, CL EPM + source]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Résolution en réutilisant le pattern symbolique pré-calculé.
 // analyzePattern doit avoir été appelé une fois sur le solver avant le premier appel.
 // Le type du solver dépend du #define DDP_EIGEN_SOLVER_* actif.
 // Sorties 100% Eigen : DFNPotential (vecteur dense), PorousPotential (matrice dense Nx×Ny).
+// Profiling optionnel : t_factorize / t_solve cumulent les temps mur des deux phases.
 // ─────────────────────────────────────────────────────────────────────────────
 void EvaluatePotentialEigen(
     int nb_nodes_fract, int Nx, int Ny,
@@ -67,6 +70,8 @@ void EvaluatePotentialEigen(
     eigen_cs::SparseMatrix& matrix_syst,
     const eigen_cs::Vector& vector_syst,
     eigen_cs::Vector& DFNPotential,
-    eigen_cs::DenseMatrix& PorousPotential);
+    eigen_cs::DenseMatrix& PorousPotential,
+    double* t_factorize = nullptr,
+    double* t_solve = nullptr);
 
 #endif /* SYSTLINEARFUNCTIONSEIGEN_H_ */

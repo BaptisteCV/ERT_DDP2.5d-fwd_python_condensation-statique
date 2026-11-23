@@ -29,7 +29,7 @@ CPP_DEPS += \
 Utilitaries/Math/%.o: ../Utilitaries/Math/%.cpp
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C++ Compiler'
-	$(CXX) $(CXXFLAGS) -I /home/bcellier/Documents/Stage/new_install/pagure/include -I /home/bcellier/Documents/Stage/new_install/pagure/suitesparse/gcc133/5.10.1/include -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
+	$(CXX) $(CXXFLAGS) $(EXTRA_INCLUDE_FLAGS) -I $(SUITESPARSE_ROOT)/include -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '
 
