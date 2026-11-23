@@ -15,7 +15,6 @@
 #include "../DomainDefinition/ElectricProperties.h"
 #include "../InputOutput/Parameters.h"
 
-
 //map<node index,map<neighboring node,electric properties of the corresponding segment> >
 typedef std::map<int,ElectricProperties> ElecPropMap;
 typedef std::map<int,ElecPropMap> NodeFracturesMap;

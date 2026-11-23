@@ -23,6 +23,7 @@
 #  error "SystLinearFunctionsEigen.h : aucun solveur sélectionné — définir DDP_EIGEN_SOLVER_LLT ou DDP_EIGEN_SOLVER_UMFPACK"
 #endif
 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DDPEigenBase : données du système de base (indépendantes de w et de la source)
 // ─────────────────────────────────────────────────────────────────────────────

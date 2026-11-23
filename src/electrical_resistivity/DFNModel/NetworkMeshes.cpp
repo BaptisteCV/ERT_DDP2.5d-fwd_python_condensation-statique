@@ -31,6 +31,7 @@ double FractureFamilyDesc::ReturnAngleRadian(){
 	return PI*fracture_angle/180;
 }
 
+
 /*******************************/
 // Functions for NetworkMeshes //
 /*******************************/

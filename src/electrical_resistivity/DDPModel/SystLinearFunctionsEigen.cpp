@@ -22,6 +22,7 @@ static inline pair<int,int> rij(int idx, int Ny) { return {idx / Ny, idx % Ny}; 
 // Construction du système de base Eigen
 // ─────────────────────────────────────────────────────────────────────────────
 
+
 DDPEigenBase DetermineBasicLinearSystemDDPEigen(DDPModel& m) {
     //double t_eigen_total = omp_get_wtime();
     DDPEigenBase base;
