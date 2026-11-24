@@ -16,17 +16,17 @@ make clean && make exec -j
 
 ### Module Python `PERFORM.so` (`make lib`)
 
-Il faut en plus les en-têtes de Python et pybind11, pris dans **le Python qui lancera les scripts** : `PERFORM.so`
-ne s'importe qu'avec la version de Python qui l'a compilé.
+Il faut en plus les en-têtes de Python et pybind11. `install.sh` les prend dans le `python3` de la machine, et
+prévient s'ils manquent (`make exec` reste possible).
 
 ```bash
-sudo apt install python3-dev
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt      # contient pybind11
-PYTHON="$PWD/.venv/bin/python" bash ert_deps/install.sh "$PWD"           # rapide si déjà installé : rien n'est recompilé
+sudo apt install python3-dev python3-pybind11
+bash ert_deps/install.sh "$PWD"          # rapide si déjà installé : rien n'est recompilé
 cd src/electrical_resistivity/Release && make clean && make lib -j
 ```
 
-Sans `PYTHON`, le script utilise `python3` et prévient si `Python.h` ou pybind11 manquent (`make exec` reste possible).
+Attention : `PERFORM.so` ne s'importe qu'avec le `python3` qui a servi à le compiler. Lancé avec un autre Python,
+le code passe en mode exécutable sans erreur visible (seulement le message « PERFORM.so not found »).
 
 `install.sh` installe les dépendances dans `ert_deps/install/` (non versionné ; modifiable avec `DEPS_PREFIX=...`), puis écrit
 `src/electrical_resistivity/makefile.init` dans le dépôt du code. Ce fichier, propre à la machine, remplace les
