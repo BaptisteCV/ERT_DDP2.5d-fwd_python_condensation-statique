@@ -13,7 +13,10 @@
 # Memes versions que sur la machine de reference (Ubuntu 24.04, gcc 13.3).
 #
 # Prerequis (Ubuntu) : sudo apt install build-essential cmake curl xz-utils libblas-dev liblapack-dev
-# Variables reglables : DEPS_PREFIX, JOBS, BLAS_LIBS, LAPACK_LIBS.
+# Pour make lib (PERFORM.so) en plus : sudo apt install python3-dev, et pybind11 installe dans le Python qui lance
+# les scripts (pip install -r requirements.txt), designe par PYTHON :
+#   PYTHON=/chemin/du/venv/bin/python bash install.sh [CHEMIN_DU_CODE]
+# Variables reglables : DEPS_PREFIX, JOBS, BLAS_LIBS, LAPACK_LIBS, PYTHON (python3 par defaut).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -22,6 +25,7 @@ DEPS_PREFIX=${DEPS_PREFIX:-$HERE/install}
 JOBS=${JOBS:-$(nproc)}
 BLAS_LIBS=${BLAS_LIBS:--lblas}
 LAPACK_LIBS=${LAPACK_LIBS:--llapack}
+PYTHON=${PYTHON:-python3}
 
 SS_VERSION=5.10.1
 BOOST_VERSION=1.84.0
@@ -103,6 +107,30 @@ if [ ! -e "$SS_PREFIX/lib/libumfpack.so" ]; then
     cd ..
 fi
 
+# ---------- Python + pybind11 (uniquement pour make lib, PERFORM.so) ----------
+# PERFORM.so ne s'importe qu'avec le Python qui a servi a le compiler : PYTHON doit etre celui qui lance les scripts
+# (en general le python du venv dans lequel requirements.txt, donc pybind11, est installe).
+PY_INCLUDE=""
+PYBIND_INCLUDE=""
+if command -v "$PYTHON" > /dev/null; then
+    PY_INCLUDE=$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["include"])' 2> /dev/null || true)
+    PYBIND_INCLUDE=$("$PYTHON" -c 'import pybind11; print(pybind11.get_include())' 2> /dev/null || true)
+fi
+LIB_OK=1
+if [ -z "$PY_INCLUDE" ] || [ ! -f "$PY_INCLUDE/Python.h" ]; then
+    LIB_OK=0
+    echo "ATTENTION : Python.h introuvable pour $PYTHON (sudo apt install python3-dev)." >&2
+fi
+if [ -z "$PYBIND_INCLUDE" ]; then
+    LIB_OK=0
+    echo "ATTENTION : pybind11 introuvable pour $PYTHON (pip install -r requirements.txt dans ce Python)." >&2
+fi
+if [ $LIB_OK = 0 ]; then
+    echo "  -> make exec fonctionnera, pas make lib (PERFORM.so). Relancer avec PYTHON=<chemin du python> une fois corrige." >&2
+    PY_INCLUDE=${PY_INCLUDE:-$BOOST_PREFIX/include}
+    PYBIND_INCLUDE=${PYBIND_INCLUDE:-$BOOST_PREFIX/include}
+fi
+
 # ---------- makefile.init ----------
 INIT=$DEPS_PREFIX/makefile.init
 cat > "$INIT" <<EOF
@@ -117,9 +145,9 @@ BOOST_ROOT := \$(DEPS_PREFIX)/boost-$BOOST_VERSION
 # Eigen 3.4.0 + boost/numeric/bindings
 EIGEN_INCLUDE := $HERE/headers
 EXTRA_INCLUDE_FLAGS :=
-# Inutiles a la compilation, mais ne doivent pas etre vides (sinon le makefile produit un -I sans argument)
-PYMOD_INCLUDE := \$(BOOST_ROOT)/include
-PYTHON_INCLUDE := \$(BOOST_ROOT)/include
+# Utilises seulement par make lib (PERFORM.so) : en-tetes de pybind11 et de Python ($("$PYTHON" --version 2>&1 || echo "$PYTHON"), $PYTHON)
+PYMOD_INCLUDE := $PYBIND_INCLUDE
+PYTHON_INCLUDE := $PY_INCLUDE
 EXTRA_CXXFLAGS :=
 EOF
 
