@@ -44,3 +44,11 @@ local.properties
 
 # IDE (JetBrains)
 .idea/
+
+# Benchmarks (num_test.py)
+num_test_runs/
+
+# Chemins des dependances propres a chaque machine (genere par ert_deps/install.sh ou cluster/compile.slurm)
+src/electrical_resistivity/makefile.init
+# Dependances installees par ert_deps/install.sh (compilees, propres a la machine)
+ert_deps/install/
